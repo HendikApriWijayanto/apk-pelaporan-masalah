@@ -1,0 +1,68 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Masyarakat {
+  id_masyarakat Int        @id @default(autoincrement())
+  nama          String?
+  nik           BigInt?
+  no_hp         String?
+  alamat        String?
+  pengaduan     Pengaduan[]
+  foto          Foto[]
+}
+
+model Admin {
+  id_admin  Int        @id @default(autoincrement())
+  nama      String?
+  password  String
+  email     String     @unique
+  validasi  Validasi[]
+}
+
+model Pengaduan {
+  id_pengaduan  Int        @id @default(autoincrement())
+  id_masyarakat Int
+  deskripsi     String?
+  lokasi        String?
+  status        String?
+  masyarakat    Masyarakat @relation(fields: [id_masyarakat], references: [id_masyarakat])
+  foto          Foto[]
+  validasi      Validasi[]
+}
+
+model Foto {
+  id_foto       Int        @id @default(autoincrement())
+  id_pengaduan  Int
+  file          String?
+  waktu         DateTime   @default(now()) @db.Timestamp(6)
+  id_pengirim   Int
+  pengaduan     Pengaduan  @relation(fields: [id_pengaduan], references: [id_pengaduan])
+  pengirim      Masyarakat @relation(fields: [id_pengirim], references: [id_masyarakat])
+}
+
+model Validasi {
+  id_validasi   Int        @id @default(autoincrement())
+  id_pengaduan  Int
+  id_admin      Int
+  pengaduan     Pengaduan  @relation(fields: [id_pengaduan], references: [id_pengaduan])
+  admin         Admin      @relation(fields: [id_admin], references: [id_admin])
+}
