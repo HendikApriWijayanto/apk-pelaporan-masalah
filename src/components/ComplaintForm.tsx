@@ -15,17 +15,17 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
     idNumber: '',
     description: '',
   });
-  const [imageUrl, setImageUrl] = useState<string>('');
-  const [imagePreview, setImagePreview] = useState<string>('');
+  const [imageFile, setImageFile] = useState<File | null>(null);  // Ubah: Simpan file asli, bukan base64 string
+  const [imagePreview, setImagePreview] = useState<string>('');  // Untuk preview saja
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setImageFile(file);  // Simpan file asli untuk kirim ke server
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-        setImageUrl(reader.result as string);
+        setImagePreview(reader.result as string);  // Preview base64 untuk UI
       };
       reader.readAsDataURL(file);
     }
@@ -40,31 +40,30 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
     }
 
     try {
-      // BAGIAN PENTING: Menghubungkan ke Backend
+      // Gunakan FormData untuk kirim file asli (bukan JSON)
+      const formDataToSend = new FormData();
+      formDataToSend.append('name', formData.name);
+      formDataToSend.append('phone', formData.phone);
+      formDataToSend.append('lokasi', formData.address);  // Match kolom DB
+      formDataToSend.append('idNumber', formData.idNumber);
+      formDataToSend.append('deskripsi', formData.description);
+      if (imageFile) {
+        formDataToSend.append('image', imageFile);  // Kirim file asli
+      }
+
       const response = await fetch('http://localhost:5000/api/pengaduan', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: formData.name,
-          phone: formData.phone,
-          lokasi: formData.address, // Diubah dari 'address' ke 'lokasi' untuk match kolom database
-          idNumber: formData.idNumber,
-          deskripsi: formData.description,
-          imageUrl: imageUrl || null,
-          // Jika ada field lain seperti 'id_masyarakat' atau 'status', tambahkan di sini atau handle di backend
-        }),
+        body: formDataToSend,  // Kirim FormData, bukan JSON
       });
 
       if (response.ok) {
         const result = await response.json();
-        alert('Laporan berhasil dikirim ke database!');
+        alert('Laporan berhasil dikirim!');
         
-        // Memanggil fungsi onSubmit bawaan untuk update UI
+        // Update UI dengan preview (base64 untuk tampilan sementara)
         onSubmit({
           ...formData,
-          imageUrl: imageUrl || undefined,
+          imageUrl: imagePreview || undefined,  // Perbaiki: Tambahkan 'undefined' setelah ||
         });
       } else {
         const errorData = await response.json();
@@ -134,7 +133,7 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
 
               <div>
                 <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
-                  Alamat *
+                  Lokasi *
                 </label>
                 <input
                   type="text"
@@ -179,7 +178,7 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
                   type="button"
                   onClick={() => {
                     setImagePreview('');
-                    setImageUrl('');
+                    setImageFile(null);
                     if (fileInputRef.current) fileInputRef.current.value = '';
                   }}
                   className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
