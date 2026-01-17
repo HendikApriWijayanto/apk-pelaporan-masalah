@@ -316,10 +316,10 @@ Tanggal: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}
                   <div className="flex gap-4">
                     {complaint.imageUrl && (
                       <img
-                        src={complaint.imageUrl}
+                        src={`http://localhost:5000${complaint.imageUrl}`}
                         alt="Laporan"
                         className="w-32 h-32 object-cover rounded-lg flex-shrink-0"
-                      />
+                        />
                     )}
                     
                     <div className="flex-1">

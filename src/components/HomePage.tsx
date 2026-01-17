@@ -165,7 +165,7 @@ export function HomePage({
                 <div className="flex items-start gap-4">
                   {complaint.imageUrl && (
                     <img
-                      src={complaint.imageUrl}
+                      src={`http://localhost:5000${complaint.imageUrl}`}  // Perbaikan: Prepend base URL
                       alt="Laporan"
                       className="w-24 h-24 object-cover rounded-lg flex-shrink-0"
                     />
