@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react';
 import { Camera, Upload, X, ArrowLeft, Send } from 'lucide-react';
-import { Complaint } from '../App';
+import { Complaint } from '../App'; // Asumsikan interface Complaint dari App.tsx
 
 interface ComplaintFormProps {
   onSubmit: (complaint: Omit<Complaint, 'id' | 'status' | 'createdAt'>) => void;
@@ -11,21 +11,32 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
   const [formData, setFormData] = useState({
     name: '',
     phone: '',
-    address: '',
-    idNumber: '',
-    description: '',
+    address: '', // Match interface Complaint
+    idNumber: '', // Match interface Complaint
+    description: '', // Match interface Complaint
   });
-  const [imageUrl, setImageUrl] = useState<string>('');
+  const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string>('');
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setImageFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImagePreview(reader.result as string);
-        setImageUrl(reader.result as string);
+        if (reader.result) {
+          setImagePreview(reader.result as string);
+        } else {
+          alert('Gagal membaca file gambar. Coba lagi.');
+          setImageFile(null);
+        }
+      };
+      reader.onerror = () => {
+        alert('Error membaca file. Pastikan file gambar valid.');
+        setImageFile(null);
+        setImagePreview('');
       };
       reader.readAsDataURL(file);
     }
@@ -34,45 +45,66 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!formData.name || !formData.phone || !formData.address || !formData.description) {
-      alert('Mohon lengkapi semua data yang diperlukan');
+    // Match server: name, deskripsi, idNumber, lokasi wajib; phone opsional
+    if (!formData.name || !formData.address || !formData.idNumber || !formData.description) {
+      alert('Mohon lengkapi semua data yang diperlukan (Nama, Lokasi, NIK, Deskripsi)');
       return;
     }
 
+    // Validasi NIK: 16 digit angka (match server)
+    if (!/^\d{16}$/.test(formData.idNumber)) {
+      alert('NIK harus berupa 16 digit angka');
+      return;
+    }
+
+    // Validasi phone: jika ada, allow spasi/hyphen di client, tapi hapus saat kirim untuk match server /^\d+$/
+    if (formData.phone && !/^[0-9\s\-]+$/.test(formData.phone)) {
+      alert('Nomor HP harus berupa angka, spasi, atau tanda hubung');
+      return;
+    }
+
+    setIsSubmitting(true);
     try {
-      // BAGIAN PENTING: Menghubungkan ke Backend
+      const formDataToSend = new FormData();
+      formDataToSend.append('name', formData.name);
+      if (formData.phone) { // Hanya append jika ada phone, agar server set null jika kosong
+        formDataToSend.append('phone', formData.phone.replace(/[\s\-]/g, ''));
+      }
+      formDataToSend.append('lokasi', formData.address); // Match server (lokasi dari address)
+      formDataToSend.append('idNumber', formData.idNumber);
+      formDataToSend.append('deskripsi', formData.description); // Match server (deskripsi dari description)
+      if (imageFile) {
+        formDataToSend.append('image', imageFile);
+      }
+
       const response = await fetch('http://localhost:5000/api/pengaduan', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          name: formData.name,
-          phone: formData.phone,
-          lokasi: formData.address, // Diubah dari 'address' ke 'lokasi' untuk match kolom database
-          idNumber: formData.idNumber,
-          deskripsi: formData.description,
-          imageUrl: imageUrl || null,
-          // Jika ada field lain seperti 'id_masyarakat' atau 'status', tambahkan di sini atau handle di backend
-        }),
+        body: formDataToSend,
       });
 
       if (response.ok) {
         const result = await response.json();
-        alert('Laporan berhasil dikirim ke database!');
+        alert('Laporan berhasil dikirim!');
         
-        // Memanggil fungsi onSubmit bawaan untuk update UI
+        // Match interface Complaint: { name, phone, address, idNumber, description, imageUrl? }
         onSubmit({
-          ...formData,
-          imageUrl: imageUrl || undefined,
-        });
+  name: formData.name,
+  phone: formData.phone, // String kosong jika tidak ada
+  address: formData.address,
+  idNumber: formData.idNumber,
+  description: formData.description,
+  imageUrl: result.fotoUrl || undefined,  // Perbaiki: hapus koma, tambah undefined
+});
       } else {
         const errorData = await response.json();
+        console.error('Server error:', errorData);
         alert('Gagal menyimpan: ' + (errorData.error || 'Terjadi kesalahan server'));
       }
     } catch (error) {
       console.error('Error saat kirim data:', error);
       alert('Koneksi ke server gagal. Pastikan server.js sudah jalan di port 5000');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -118,7 +150,7 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
 
               <div>
                 <label htmlFor="phone" className="block text-sm font-medium text-gray-700 mb-2">
-                  Nomor HP *
+                  Nomor HP
                 </label>
                 <input
                   type="tel"
@@ -128,13 +160,12 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
                   onChange={handleChange}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="08xxxxxxxxxx"
-                  required
                 />
               </div>
 
               <div>
                 <label htmlFor="address" className="block text-sm font-medium text-gray-700 mb-2">
-                  Alamat *
+                  Lokasi *
                 </label>
                 <input
                   type="text"
@@ -143,14 +174,14 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
                   value={formData.address}
                   onChange={handleChange}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="Masukkan alamat lengkap"
+                  placeholder="Masukkan lokasi pengaduan"
                   required
                 />
               </div>
 
               <div>
                 <label htmlFor="idNumber" className="block text-sm font-medium text-gray-700 mb-2">
-                  NIK (Nomor Induk Kependudukan)
+                  NIK *
                 </label>
                 <input
                   type="text"
@@ -159,8 +190,9 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
                   value={formData.idNumber}
                   onChange={handleChange}
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="16 digit NIK"
-                  maxLength={16}
+                  placeholder="Masukkan NIK (16 digit)"
+                  pattern="[0-9]{16}"
+                  required
                 />
               </div>
             </div>
@@ -179,7 +211,7 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
                   type="button"
                   onClick={() => {
                     setImagePreview('');
-                    setImageUrl('');
+                    setImageFile(null);
                     if (fileInputRef.current) fileInputRef.current.value = '';
                   }}
                   className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors"
@@ -234,15 +266,21 @@ export function ComplaintForm({ onSubmit, onCancel }: ComplaintFormProps) {
               type="button"
               onClick={onCancel}
               className="flex-1 px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              disabled={isSubmitting}
             >
               Batal
             </button>
             <button
               type="submit"
               className="flex-1 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
+              disabled={isSubmitting}
             >
-              <Send className="w-5 h-5" />
-              <span>Kirim Laporan</span>
+              {isSubmitting ? (
+                <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+              ) : (
+                <Send className="w-5 h-5" />
+              )}
+              <span>{isSubmitting ? 'Mengirim...' : 'Kirim Laporan'}</span>
             </button>
           </div>
         </form>
