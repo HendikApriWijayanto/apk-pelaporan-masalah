@@ -1,175 +1,346 @@
+// Import paket
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 const express = require('express');
-const mysql = require('mysql2');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const multer = require('multer');
+const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
-app.use(cors());  // Izinkan request dari frontend React
+app.use(express.urlencoded({ extended: true }));
 
-// Setup multer untuk upload foto (simpan di folder uploads)
-const upload = multer({ dest: 'uploads/' });
-
-// Koneksi ke MySQL
-const db = mysql.createConnection({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_NAME
+// percobaan
+app.get("/test-db", async (req, res) => {
+  try {
+    const result = await prisma.admin.findMany();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-db.connect((err) => {
-    if (err) throw err;
-    console.log('Connected to MySQL database: laporan_kelurahan');
-});
 
-// Middleware autentikasi admin (gunakan JWT)
-const authenticateAdmin = (req, res, next) => {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
-    if (!token) return res.status(401).json({ error: 'Access denied' });
-    try {
-        const verified = jwt.verify(token, process.env.JWT_SECRET);
-        req.admin = verified;
-        next();
-    } catch (err) {
-        res.status(400).json({ error: 'Invalid token' });
+// CORS
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://localhost:4173', 'https://laporan-kappa.vercel.app'],  // Port Vite dan preview
+  credentials: true
+}));
+
+// Serve static files untuk uploads
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// Multer config
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const uploadDir = path.join(__dirname, 'uploads', 'pengaduan');
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });  // Pastikan folder ada
     }
+    cb(null, uploadDir);
+  },
+  filename: (req, file, cb) => {
+    const uniqueName = Date.now() + '-' + file.originalname.replace(/\s+/g, '_');  // Ganti spasi dengan underscore
+    cb(null, uniqueName);
+  }
+});
+const upload = multer({
+  storage: storage,
+  limits: { fileSize: 5 * 1024 * 1024 },  // 5MB limit
+  fileFilter: (req, file, cb) => {
+    if (file.mimetype.startsWith('image/')) {
+      cb(null, true);
+    } else {
+      cb(new Error('Hanya file gambar yang diizinkan!'), false);
+    }
+  }
+});
+
+// Middleware autentikasi admin
+const authenticateAdmin = (req, res, next) => {
+  const token = req.header('Authorization')?.replace('Bearer ', '');
+  if (!token) return res.status(401).json({ error: 'Access denied' });
+  try {
+    const verified = jwt.verify(token, process.env.JWT_SECRET);
+    req.admin = verified;
+    next();
+  } catch (err) {
+    res.status(400).json({ error: 'Invalid token' });
+  }
 };
 
 // Hash password
 const hashPassword = async (password) => {
-    return await bcrypt.hash(password, 10);
+  return await bcrypt.hash(password, 10);
 };
 
 // API Endpoints
 
+app.get('/', (req, res) => {
+  res.send('Server is running on port 5000');
+});
+
 // 1. Masyarakat
-app.post('/api/masyarakat', (req, res) => {
-    const { nama, nik, no_hp, alamat } = req.body;
-    db.query('INSERT INTO masyarakat (nama, nik, no_hp, alamat) VALUES (?, ?, ?, ?)', [nama, nik, no_hp, alamat], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: 'Masyarakat added', id: result.insertId });
+app.post('/api/masyarakat', async (req, res) => {
+  const { nama, nik, no_hp, alamat } = req.body;
+  if (!nama || !nik || !alamat) return res.status(400).json({ error: 'Nama, NIK, dan alamat diperlukan' });
+  try {
+    const masyarakat = await prisma.masyarakat.create({
+      data: {
+        nama,
+        nik: Number(nik),  // Number untuk NIK 16 digit
+        no_hp: no_hp ? parseInt(no_hp) : null,  // Parse ke Int, atau null jika tidak ada
+        alamat
+      }
     });
+    res.json({
+      message: 'Masyarakat added',
+      masyarakat: { ...masyarakat, nik: masyarakat.nik.toString() }  // Konversi Number ke string
+    });
+  } catch (error) {
+    console.error('Error inserting masyarakat:', error);
+    res.status(500).json({ error: 'Gagal menambah masyarakat: ' + error.message });
+  }
 });
 
-app.get('/api/masyarakat/:id', (req, res) => {
-    db.query('SELECT * FROM masyarakat WHERE id_masyarakat = ?', [req.params.id], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(result[0]);
-    });
+app.get('/api/masyarakat', async (req, res) => {  // Tambah endpoint get all masyarakat jika diperlukan
+  try {
+    const masyarakat = await prisma.masyarakat.findMany();
+    const serializedMasyarakat = masyarakat.map(m => ({ ...m, nik: m.nik.toString() }));
+    res.json(serializedMasyarakat);
+  } catch (error) {
+    console.error('Error fetching masyarakat:', error);
+    res.status(500).json({ error: 'Gagal mengambil masyarakat: ' + error.message });
+  }
 });
 
-// 2. Pengaduan (Diperbaiki untuk menangani data masyarakat dan gambar)
-app.post('/api/pengaduan', async (req, res) => {
-    const { name, phone, lokasi, idNumber, deskripsi, imageUrl } = req.body;
-    
-    try {
-        // Cek apakah masyarakat sudah ada berdasarkan NIK atau kombinasi nama dan no_hp
-        let [masyarakat] = await db.promise().query('SELECT id_masyarakat FROM masyarakat WHERE nik = ? OR (nama = ? AND no_hp = ?)', [idNumber, name, phone]);
-        let id_masyarakat;
-        
-        if (masyarakat.length > 0) {
-            // Jika sudah ada, gunakan id_masyarakat yang ada
-            id_masyarakat = masyarakat[0].id_masyarakat;
-        } else {
-            // Jika belum ada, insert masyarakat baru
-            const [result] = await db.promise().query('INSERT INTO masyarakat (nama, nik, no_hp, alamat) VALUES (?, ?, ?, ?)', [name, idNumber, phone, lokasi]);
-            id_masyarakat = result.insertId;
+app.get('/api/masyarakat/:id', async (req, res) => {
+  try {
+    const masyarakat = await prisma.masyarakat.findUnique({
+      where: { id_masyarakat: parseInt(req.params.id) }
+    });
+    if (!masyarakat) return res.status(404).json({ error: 'Masyarakat not found' });
+    res.json({ ...masyarakat, nik: masyarakat.nik.toString() });
+  } catch (error) {
+    console.error('Error fetching masyarakat:', error);
+    res.status(500).json({ error: 'Gagal mengambil masyarakat: ' + error.message });
+  }
+});
+
+// 2. Pengaduan
+
+app.post('/api/pengaduan', upload.single('image'), async (req, res) => {
+  const { name, phone, lokasi, idNumber, deskripsi } = req.body;
+
+  if (!name || !deskripsi || !idNumber || !lokasi) {
+    return res.status(400).json({ error: 'Nama, deskripsi, NIK, dan lokasi diperlukan' });
+  }
+
+  if (!/^\d{16}$/.test(idNumber)) {
+    return res.status(400).json({ error: 'NIK harus berupa 16 digit angka' });
+  }
+
+  // Tambah validasi phone: hanya digit jika ada
+  if (phone && !/^\d+$/.test(phone)) {
+    return res.status(400).json({ error: 'Nomor HP harus berupa angka' });
+  }
+
+  try {
+    let masyarakat = await prisma.masyarakat.findFirst({
+      where: { nik: Number(idNumber) }
+    });
+
+    if (!masyarakat) {
+      masyarakat = await prisma.masyarakat.create({
+        data: {
+          nama: name,
+          nik: Number(idNumber),
+          no_hp: phone ? String(phone) : null,  // parseInt dengan base 10, aman jika sudah divalidasi
+          alamat: lokasi
         }
-        
-        // Insert pengaduan dengan id_masyarakat
-        const [pengaduanResult] = await db.promise().query('INSERT INTO pengaduan (id_masyarakat, deskripsi, lokasi, status) VALUES (?, ?, ?, ?)', [id_masyarakat, deskripsi, lokasi, 'pending']);
-        const id_pengaduan = pengaduanResult.insertId;
-        
-        // Jika ada gambar (imageUrl), insert ke tabel foto sebagai string base64
-        if (imageUrl) {
-            await db.promise().query('INSERT INTO foto (id_pengaduan, file, waktu, id_pengirim) VALUES (?, ?, NOW(), ?)', [id_pengaduan, imageUrl, id_masyarakat]);
-        }
-        
-        res.json({ message: 'Pengaduan berhasil dikirim', id_pengaduan });
-    } catch (error) {
-        console.error('Error saat menyimpan pengaduan:', error);
-        res.status(500).json({ error: error.message });
+      });
     }
-});
 
-app.get('/api/pengaduan', (req, res) => {
-    db.query('SELECT * FROM pengaduan', (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(result);
+    const pengaduan = await prisma.pengaduan.create({
+      data: {
+        deskripsi,
+        lokasi,
+        status: 'pending',
+        id_masyarakat: masyarakat.id_masyarakat
+      }
     });
-});
 
-app.put('/api/pengaduan/:id', (req, res) => {
-    const { status } = req.body;
-    db.query('UPDATE pengaduan SET status = ? WHERE id_pengaduan = ?', [status, req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: 'Pengaduan updated' });
+    let fotoUrl = null;
+    if (req.file) {
+      const foto = await prisma.foto.create({
+        data: {
+          id_pengaduan: pengaduan.id_pengaduan,
+          file: req.file.filename,
+          id_pengirim: masyarakat.id_masyarakat
+        }
+      });
+      fotoUrl = `http://localhost:5000/uploads/pengaduan/${req.file.filename}`;
+    }
+
+    res.status(201).json({
+      message: 'Pengaduan berhasil dikirim',
+      pengaduan,
+      masyarakat: { ...masyarakat, nik: masyarakat.nik.toString() },
+      fotoUrl
     });
+  } catch (error) {
+    console.error('Error saat menyimpan pengaduan:', error);
+    res.status(500).json({ error: 'Terjadi kesalahan server: ' + error.message });
+  }
 });
 
-// 3. Foto (dengan upload file) - Tetap ada untuk kompatibilitas, tapi gambar dari frontend disimpan sebagai string
-app.post('/api/foto', upload.single('file'), (req, res) => {
-    const { id_pengaduan, id_pengirim } = req.body;
-    const file = req.file ? req.file.filename : null;
-    if (!file) return res.status(400).json({ error: 'File required' });
-    db.query('INSERT INTO foto (id_pengaduan, file, id_pengirim) VALUES (?, ?, ?)', [id_pengaduan, file, id_pengirim], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: 'Foto added', id: result.insertId });
+// Di app.get('/api/pengaduan', ...)
+app.get('/api/pengaduan', async (req, res) => {
+  try {
+    const pengaduan = await prisma.pengaduan.findMany({
+      include: { foto: true, masyarakat: true }
     });
+    const serializedPengaduan = pengaduan.map(p => ({
+      ...p,
+      masyarakat: p.masyarakat ? { ...p.masyarakat, nik: p.masyarakat.nik.toString() } : null,  // Handle jika masyarakat null
+      foto: (p.foto || []).map(f => ({  // Handle jika p.foto null, set []
+        ...f,
+        url: f.file.startsWith('data:') ? f.file : `http://localhost:5000/uploads/pengaduan/${f.file}`  // Handle base64 atau filename
+      }))
+    }));
+    res.json(serializedPengaduan);
+  } catch (error) {
+    console.error('Error fetching pengaduan:', error);
+    res.status(500).json({ error: 'Gagal mengambil pengaduan: ' + error.message });
+  }
 });
 
-app.get('/api/foto/:id_pengaduan', (req, res) => {
-    db.query('SELECT * FROM foto WHERE id_pengaduan = ?', [req.params.id_pengaduan], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(result);
+// PUT untuk update status (hapus authenticateAdmin untuk sementara agar bisa update tanpa token)
+app.put('/api/pengaduan/:id', async (req, res) => {  // Diubah: Hapus authenticateAdmin
+  const { status, response } = req.body;  // Tambah response jika diperlukan
+  if (!status) return res.status(400).json({ error: 'Status diperlukan' });
+  try {
+    const pengaduan = await prisma.pengaduan.update({
+      where: { id_pengaduan: parseInt(req.params.id) },
+      data: { status, response, updatedAt: new Date() }  // Update response dan updated_at
     });
+    res.json({ message: 'Pengaduan updated', pengaduan });
+  } catch (error) {
+    console.error('Error updating pengaduan:', error);
+    res.status(500).json({ error: 'Gagal update pengaduan: ' + error.message });
+  }
 });
 
-// 4. Validasi (hanya admin yang bisa)
-app.post('/api/validasi', authenticateAdmin, (req, res) => {
-    const { id_pengaduan, status_validasi, catatan } = req.body;
-    const id_admin = req.admin.id_admin;
-    db.query('INSERT INTO validasi (id_pengaduan, id_admin, status_validasi, catatan) VALUES (?, ?, ?, ?)', [id_pengaduan, id_admin, status_validasi, catatan], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: 'Validasi added', id: result.insertId });
+// 3. Foto
+app.post('/api/foto', upload.single('file'), async (req, res) => {
+  const { pengaduanId } = req.body;
+  if (!req.file || !pengaduanId) return res.status(400).json({ error: 'File dan ID pengaduan diperlukan' });
+  try {
+    const foto = await prisma.foto.create({
+      data: {
+        id_pengaduan: parseInt(pengaduanId),
+        file: req.file.filename,  // Simpan filename
+        id_pengirim: 1  // Dummy; sesuaikan dengan auth jika perlu (misal dari masyarakat yang login)
+      }
     });
-});
-
-app.get('/api/validasi/:id_pengaduan', authenticateAdmin, (req, res) => {
-    db.query('SELECT * FROM validasi WHERE id_pengaduan = ?', [req.params.id_pengaduan], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(result);
+    res.json({
+      message: 'Foto added',
+      foto: { ...foto, url: `http://localhost:5000/uploads/pengaduan/${foto.file}` }
     });
+  } catch (error) {
+    console.error('Error inserting foto:', error);
+    res.status(500).json({ error: 'Gagal menambah foto: ' + error.message });
+  }
 });
 
-// 5. Admin (Login dan Register)
+app.get('/api/foto/:pengaduanId', async (req, res) => {
+  try {
+    const foto = await prisma.foto.findMany({
+      where: { id_pengaduan: parseInt(req.params.pengaduanId) }
+    });
+    const serializedFoto = foto.map(f => ({ ...f, url: `http://localhost:5000/uploads/pengaduan/${f.file}` }));
+    res.json(serializedFoto);
+  } catch (error) {
+    console.error('Error fetching foto:', error);
+    res.status(500).json({ error: 'Gagal mengambil foto: ' + error.message });
+  }
+});
+
+// 4. Validasi
+app.post('/api/validasi', authenticateAdmin, async (req, res) => {
+  const { pengaduanId } = req.body;
+  if (!pengaduanId) return res.status(400).json({ error: 'ID pengaduan diperlukan' });
+  try {
+    const validasi = await prisma.validasi.create({
+      data: {
+        id_pengaduan: parseInt(pengaduanId),
+        Id_admin: req.admin.id
+      }
+    });
+    res.json({ message: 'Validasi added', validasi });
+  } catch (error) {
+    console.error('Error inserting validasi:', error);
+    res.status(500).json({ error: 'Gagal menambah validasi: ' + error.message });
+  }
+});
+
+app.get('/api/validasi/:pengaduanId', authenticateAdmin, async (req, res) => {
+  try {
+    const validasi = await prisma.validasi.findMany({
+      where: { id_pengaduan: parseInt(req.params.pengaduanId) }
+    });
+    res.json(validasi);
+  } catch (error) {
+    console.error('Error fetching validasi:', error);
+    res.status(500).json({ error: 'Gagal mengambil validasi: ' + error.message });
+  }
+});
+
+// 5. Admin
 app.post('/api/admin/login', async (req, res) => {
-    const { email, password } = req.body;
-    db.query('SELECT * FROM admin WHERE email = ?', [email], async (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (result.length === 0) return res.status(401).json({ error: 'Invalid credentials' });
-        const isMatch = await bcrypt.compare(password, result[0].password);
-        if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
-        const token = jwt.sign({ id_admin: result[0].id_admin }, process.env.JWT_SECRET);
-        res.json({ message: 'Login successful', token, admin: result[0] });
-    });
+  const { email, password } = req.body;
+  if (!email || !password) return res.status(400).json({ error: 'Email dan password diperlukan' });
+  try {
+    const admin = await prisma.admin.findUnique({ where: { email } });
+    if (!admin) return res.status(401).json({ error: 'Invalid credentials' });
+    const isMatch = await bcrypt.compare(password, admin.password);
+    if (!isMatch) return res.status(401).json({ error: 'Invalid credentials' });
+    const token = jwt.sign({ id: admin.Id_admin }, process.env.JWT_SECRET);
+    res.json({ message: 'Login successful', token, admin });
+  } catch (error) {
+    console.error('Error logging in:', error);
+    res.status(500).json({ error: 'Gagal login: ' + error.message });
+  }
 });
 
 app.post('/api/admin', async (req, res) => {
-    const { nama, password, email } = req.body;
+  const { nama, password, email } = req.body;
+  if (!nama || !password || !email) return res.status(400).json({ error: 'Semua field diperlukan' });
+  try {
     const hashedPassword = await hashPassword(password);
-    db.query('INSERT INTO admin (nama, password, email) VALUES (?, ?, ?)', [nama, hashedPassword, email], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ message: 'Admin added', id: result.insertId });
+    const admin = await prisma.admin.create({
+      data: { nama, password: hashedPassword, email }
     });
+    res.json({ message: 'Admin added', admin });
+  } catch (error) {
+    console.error('Error inserting admin:', error);
+    res.status(500).json({ error: 'Gagal menambah admin: ' + error.message });
+  }
 });
 
 // Jalankan server
-const PORT = process.env.PORT || 5000;  // Menggunakan 5000 dari .env
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
+});
+
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('Shutting down server...');
+  prisma.$disconnect();
+  process.exit(0);
 });

@@ -1,68 +1,69 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
-}
-
-datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
-}
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "mysql"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
+}
+
+model Admin {
+  Id_admin Int       @id @default(autoincrement())
+  nama     String    @db.Text
+  password String    @db.VarChar(255)
+  email    String    @db.VarChar(100)
+  validasi Validasi?
+
+  @@map("admin")
 }
 
 model Masyarakat {
   id_masyarakat Int        @id @default(autoincrement())
-  nama          String?
-  nik           BigInt?
-  no_hp         String?
-  alamat        String?
-  pengaduan     Pengaduan[]
-  foto          Foto[]
-}
+  nama          String     @db.Text
+  nik           Int
+  no_hp         String     @db.VarChar(15)
+  alamat        String     @db.VarChar(500)
+  pengaduan     Pengaduan?
 
-model Admin {
-  id_admin  Int        @id @default(autoincrement())
-  nama      String?
-  password  String
-  email     String     @unique
-  validasi  Validasi[]
+  @@map("masyarakat")
 }
 
 model Pengaduan {
   id_pengaduan  Int        @id @default(autoincrement())
-  id_masyarakat Int
-  deskripsi     String?
-  lokasi        String?
-  status        String?
-  masyarakat    Masyarakat @relation(fields: [id_masyarakat], references: [id_masyarakat])
+  id_masyarakat Int        @unique(map: "id_masyarakat")
+  deskripsi     String     @db.VarChar(1000)
+  lokasi        String     @db.VarChar(1000)
+  status        String     @db.VarChar(100)
+  response      String?    @db.Text
+  createdAt     DateTime   @default(now()) @db.Timestamp(0)
+  updatedAt     DateTime   @default(now()) @updatedAt @db.Timestamp(0)
   foto          Foto[]
+  masyarakat    Masyarakat @relation(fields: [id_masyarakat], references: [id_masyarakat], onUpdate: Restrict, map: "pengaduan_ibfk_2")
   validasi      Validasi[]
+
+  @@map("pengaduan")
 }
 
 model Foto {
-  id_foto       Int        @id @default(autoincrement())
-  id_pengaduan  Int
-  file          String?
-  waktu         DateTime   @default(now()) @db.Timestamp(6)
-  id_pengirim   Int
-  pengaduan     Pengaduan  @relation(fields: [id_pengaduan], references: [id_pengaduan])
-  pengirim      Masyarakat @relation(fields: [id_pengirim], references: [id_masyarakat])
+  id_foto      Int       @id @default(autoincrement())
+  id_pengaduan Int
+  file         String    @db.VarChar(1000)
+  Waktu        DateTime  @default(now()) @updatedAt @db.Timestamp(6)
+  id_pengirim  Int
+  pengaduan    Pengaduan @relation(fields: [id_pengaduan], references: [id_pengaduan], onDelete: Cascade)
+
+  @@index([id_pengaduan], map: "foto_ibfk_1")
+  @@map("foto")
 }
 
 model Validasi {
-  id_validasi   Int        @id @default(autoincrement())
-  id_pengaduan  Int
-  id_admin      Int
-  pengaduan     Pengaduan  @relation(fields: [id_pengaduan], references: [id_pengaduan])
-  admin         Admin      @relation(fields: [id_admin], references: [id_admin])
+  id_validasi  Int       @id @default(autoincrement())
+  id_pengaduan Int
+  Id_admin     Int
+  pengaduan    Pengaduan @relation(fields: [id_pengaduan], references: [id_pengaduan], onDelete: Cascade)
+  admin        Admin     @relation(fields: [id_validasi], references: [Id_admin], onUpdate: Restrict, map: "validasi_ibfk_3")
+
+  @@index([id_pengaduan], map: "validasi_ibfk_2")
+  @@index([Id_admin], map: "validasi_ibfk_4")
+  @@map("validasi")
 }

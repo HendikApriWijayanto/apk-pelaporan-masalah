@@ -4,7 +4,7 @@ import { Complaint } from '../App';
 
 interface AdminDashboardProps {
   complaints: Complaint[];
-  onUpdateComplaint: (id: string, updates: Partial<Complaint>) => void;
+  onUpdateComplaint: (id: number, updates: Partial<Complaint>) => void;
   onLogout: () => void;
 }
 
@@ -22,18 +22,46 @@ export function AdminDashboard({ complaints, onUpdateComplaint, onLogout }: Admi
     statusFilter: 'all' as 'all' | 'pending' | 'in-progress' | 'completed' | 'rejected',
   });
 
-  const handleValidate = (id: string, status: Complaint['status']) => {
-    onUpdateComplaint(id, { status });
-    if (selectedComplaint?.id === id) {
-      setSelectedComplaint({ ...selectedComplaint, status });
+  const handleValidate = async (id: number, status: Complaint['status']) => {
+    try {
+      const response = await fetch(`http://localhost:5000/api/pengaduan/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (response.ok) {
+        onUpdateComplaint(id, { status });
+        if (selectedComplaint?.id === id) {
+          setSelectedComplaint({ ...selectedComplaint, status });
+        }
+      } else {
+        alert('Gagal update status. Periksa koneksi server.');
+      }
+    } catch (error) {
+      console.error('Error updating status:', error);
+      alert('Terjadi kesalahan saat update status.');
     }
   };
 
-  const handleSubmitResponse = (id: string) => {
+  const handleSubmitResponse = async (id: number) => {
     if (response.trim()) {
-      onUpdateComplaint(id, { response, status: 'in-progress' });
-      setResponse('');
-      setSelectedComplaint(null);
+      try {
+        const res = await fetch(`http://localhost:5000/api/pengaduan/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'in-progress', response }),
+        });
+        if (res.ok) {
+          onUpdateComplaint(id, { response, status: 'in-progress' });
+          setResponse('');
+          setSelectedComplaint(null);
+        } else {
+          alert('Gagal kirim tanggapan. Periksa koneksi server.');
+        }
+      } catch (error) {
+        console.error('Error submitting response:', error);
+        alert('Terjadi kesalahan saat kirim tanggapan.');
+      }
     }
   };
 
@@ -145,34 +173,45 @@ Tanggal: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}
     }
   };
 
-  // Get unique citizens
-  const citizens = complaints.reduce((acc, complaint) => {
-    if (!acc.find(c => c.phone === complaint.phone)) {
-      acc.push({
-        name: complaint.name,
-        phone: complaint.phone,
-        address: complaint.address,
-        idNumber: complaint.idNumber,
-        totalComplaints: complaints.filter(c => c.phone === complaint.phone).length,
-      });
-    }
-    return acc;
-  }, [] as Array<{ name: string; phone: string; address: string; idNumber: string; totalComplaints: number }>);
 
-  // Filter complaints based on search
-  const filteredComplaints = complaints.filter(c => 
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.phone.includes(searchQuery) ||
-    c.address.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.description.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+const citizens = complaints.reduce((acc, complaint) => {
+  // Fallback untuk semua field agar aman jika undefined/null
+  const phone = complaint.phone || '';
+  const name = complaint.name || '';
+  const address = complaint.address || '';
+  const idNumber = complaint.idNumber || '';
+  
+  if (!acc.find(c => (c.phone || '') === phone)) { 
+    acc.push({
+      name: name, 
+      phone: phone, 
+      address: address, 
+      idNumber: idNumber, 
+      totalComplaints: complaints.filter(c => (c.phone || '') === phone).length, // Null check di filter
+    });
+  }
+  return acc; 
+}, [] as Array<{ name: string; phone: string; address: string; idNumber: string; totalComplaints: number }>);
 
-  // Filter citizens based on search
-  const filteredCitizens = citizens.filter(c =>
-    c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    c.phone.includes(searchQuery) ||
-    c.address.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+
+const filteredComplaints = complaints.filter(c => 
+  (c.name || '').toLowerCase().includes(searchQuery.toLowerCase()) || // Fallback untuk name
+  (c.phone || '').includes(searchQuery) || // Fallback untuk phone
+  (c.address || '').toLowerCase().includes(searchQuery.toLowerCase()) || // Fallback untuk address
+  (c.description || '').toLowerCase().includes(searchQuery.toLowerCase()) // Fallback untuk description
+);
+
+const filteredCitizens = citizens.filter(c =>
+  c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+  c.phone.includes(searchQuery) || 
+  c.address.toLowerCase().includes(searchQuery.toLowerCase())
+);
+
+
+  // Fungsi untuk handle error gambar (fallback ke placeholder)
+  const handleImageError = (e: React.SyntheticEvent<HTMLImageElement, Event>) => {
+    e.currentTarget.src = "/placeholder-image.png"; 
+  };
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -241,12 +280,12 @@ Tanggal: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}
 
           <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
             <div className="flex items-center gap-3">
-              <div className="bg-purple-100 p-3 rounded-lg">
-                <Users className="w-6 h-6 text-purple-600" />
+              <div className="bg-red-100 p-3 rounded-lg">
+                <XCircle className="w-6 h-6 text-red-600" />
               </div>
               <div>
-                <div className="text-gray-500">Warga</div>
-                <div className="text-2xl">{citizens.length}</div>
+                <div className="text-gray-500">Ditolak</div>
+                <div className="text-2xl">{complaints.filter(c => c.status === 'rejected').length}</div>
               </div>
             </div>
           </div>
@@ -314,22 +353,23 @@ Tanggal: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}
                   className="bg-white rounded-xl p-6 shadow-sm border border-gray-100"
                 >
                   <div className="flex gap-4">
-                    {complaint.imageUrl && (
-                      <img
-                        src={complaint.imageUrl}
-                        alt="Laporan"
-                        className="w-32 h-32 object-cover rounded-lg flex-shrink-0"
-                      />
-                    )}
+                      {complaint.imageUrl && (
+    <img
+      src={complaint.imageUrl}  // Ubah dari `http://localhost:5000${complaint.imageUrl}` ke ini
+      alt="Laporan"
+      className="w-32 h-32 object-cover rounded-lg flex-shrink-0"
+    />
+  )}
                     
                     <div className="flex-1">
                       <div className="flex items-start justify-between mb-3">
                         <div>
                           <h3 className="text-gray-900 mb-1">{complaint.name}</h3>
-                          <p className="text-gray-600">{complaint.phone} • {complaint.address}</p>
+                          <p className="text-gray-600">{complaint.phone}</p>
                           {complaint.idNumber && (
                             <p className="text-gray-500">NIK: {complaint.idNumber}</p>
                           )}
+                          {/* <h3 className="text-gray-900 mb-1">{complaint.address}</h3> */}
                         </div>
                         <span className={`px-3 py-1 rounded-full text-sm ${getStatusColor(complaint.status)}`}>
                           {getStatusText(complaint.status)}
@@ -345,8 +385,9 @@ Tanggal: ${new Date().toLocaleDateString('id-ID', { dateStyle: 'full' })}
                           </p>
                         </div>
                       )}
+                      <h3 className="text-gray-900 mb-1">{complaint.address}</h3>
                       
-                      <div className="flex items-center gap-2 text-sm text-gray-500 mb-4">
+                      <div className="flex items-center justify-between text-sm text-gray-500 mb-4">
                         <span>{new Date(complaint.createdAt).toLocaleDateString('id-ID')}</span>
                         {complaint.updatedAt && (
                           <>
